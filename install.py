@@ -2,6 +2,8 @@
 """
 Installer for agy-hud.
 Automates backup of Antigravity settings and configuration of statusLine hook.
+Supports both local execution (after git clone) and remote one-liner execution:
+  curl -fsSL https://raw.githubusercontent.com/MaxHaiCom/agy-hud/main/install.py | python3
 """
 
 import os
@@ -9,26 +11,42 @@ import sys
 import json
 import shutil
 import time
+import urllib.request
 
+RAW_URL = "https://raw.githubusercontent.com/MaxHaiCom/agy-hud/main/statusline.py"
 SETTINGS_PATH = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
 DEST_SCRIPT_PATH = os.path.expanduser("~/.gemini/antigravity-cli/statusline.py")
-SOURCE_SCRIPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "statusline.py")
+
+# Determine source location
+SOURCE_SCRIPT_PATH = None
+if "__file__" in globals() and os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "statusline.py")):
+    SOURCE_SCRIPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "statusline.py")
 
 
 def main():
     print("\x1b[1;38;2;208;209;254m[agy-hud]\x1b[0m Installing seamless pastel statusline for Antigravity CLI...")
 
-    if not os.path.isfile(SOURCE_SCRIPT_PATH):
-        print(f"\x1b[31mError:\x1b[0m Cannot find source statusline.py at {SOURCE_SCRIPT_PATH}")
-        sys.exit(1)
-
     # 1. Ensure target directory exists
     os.makedirs(os.path.dirname(DEST_SCRIPT_PATH), exist_ok=True)
 
-    # 2. Copy statusline.py
-    shutil.copy2(SOURCE_SCRIPT_PATH, DEST_SCRIPT_PATH)
+    # 2. Copy or download statusline.py
+    if SOURCE_SCRIPT_PATH and os.path.isfile(SOURCE_SCRIPT_PATH):
+        shutil.copy2(SOURCE_SCRIPT_PATH, DEST_SCRIPT_PATH)
+        print(f"✓ Installed statusline script from local source to {DEST_SCRIPT_PATH}")
+    else:
+        print(f"↓ Fetching statusline.py from GitHub ({RAW_URL})...")
+        try:
+            req = urllib.request.Request(RAW_URL, headers={"User-Agent": "agy-hud-installer"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                code = resp.read()
+                with open(DEST_SCRIPT_PATH, "wb") as f:
+                    f.write(code)
+            print(f"✓ Downloaded statusline script to {DEST_SCRIPT_PATH}")
+        except Exception as e:
+            print(f"\x1b[31mError downloading from GitHub:\x1b[0m {e}")
+            sys.exit(1)
+
     os.chmod(DEST_SCRIPT_PATH, 0o755)
-    print(f"✓ Installed statusline script to {DEST_SCRIPT_PATH}")
 
     # 3. Update settings.json safely
     settings = {}

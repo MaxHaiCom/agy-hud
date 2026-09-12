@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 280" width="100%" height="100%">
+  <defs>
+    <style>
+      .term-bg { fill: #0b0f17; rx: 12px; }
+      .term-border { stroke: #1f293d; stroke-width: 1.5px; fill: none; rx: 12px; }
+      .header-bg { fill: #131b29; rx: 12px; }
+      .title-text { fill: #7987a0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Segoe UI", sans-serif; font-size: 12px; font-weight: 500; }
+      .code-font { font-family: "SF Mono", "Menlo", "JetBrains Mono", "Courier New", monospace; font-size: 13.5px; }
+      .c-model { fill: #d0d1fe; font-weight: 600; }
+      .c-folder { fill: #e6ebf5; font-weight: 500; }
+      .c-git { fill: #d982f5; }
+      .c-sep { fill: #414855; }
+      .c-label { fill: #828791; }
+      .c-dim { fill: #616a7d; font-size: 12px; }
+      .c-ctx { fill: #b4fa72; font-weight: 600; }
+      .c-usage { fill: #c1e3fe; font-weight: 600; }
+      .c-warn { fill: #ff8787; font-weight: 500; }
+      .c-cursor { fill: #00e5ff; }
+    </style>
+  </defs>
+
+  <!-- Window Container -->
+  <rect width="880" height="280" class="term-bg" />
+  
+  <!-- Window Header -->
+  <path d="M 0,12 Q 0,0 12,0 L 868,0 Q 880,0 880,12 L 880,40 L 0,40 Z" class="header-bg" />
+  <circle cx="24" cy="20" r="6" fill="#ff5f56" />
+  <circle cx="44" cy="20" r="6" fill="#ffbd2e" />
+  <circle cx="64" cy="20" r="6" fill="#27c93f" />
+  <text x="440" y="24" text-anchor="middle" class="title-text">Antigravity CLI (agy) — agy-hud</text>
+
+  <!-- Window Border -->
+  <rect width="880" height="280" class="term-border" />
+
+  <!-- Statusline Content -->
+  <g transform="translate(32, 82)">
+    <!-- Line 1: [Model] | Folder git:(branch*) -->
+    <text y="0" class="code-font">
+      <tspan class="c-model">[3.8 Flash High]</tspan>
+      <tspan class="c-sep"> │ </tspan>
+      <tspan class="c-folder">衣橱</tspan>
+      <tspan class="c-git"> git:(main*)</tspan>
+    </text>
+
+    <!-- Line 2: Context + 5h + Weekly -->
+    <!-- Context Bar -->
+    <g transform="translate(0, 36)">
+      <text x="0" y="11" class="code-font c-label">Context</text>
+      <g transform="translate(68, 0)">
+        <!-- Track Background -->
+        <rect x="0" y="0" width="70" height="15" rx="3" fill="#202d17" />
+        <!-- Fill Percentage (41% of 70 = 28.7) -->
+        <rect x="0" y="0" width="28.7" height="15" rx="3" fill="#b4fa72" />
+      </g>
+      <text x="146" y="12" class="code-font c-ctx">41%</text>
+
+      <text x="186" y="11" class="code-font c-sep">│</text>
+
+      <!-- 5h Bar -->
+      <text x="206" y="11" class="code-font c-label">5h</text>
+      <g transform="translate(230, 0)">
+        <rect x="0" y="0" width="70" height="15" rx="3" fill="#2c3943" />
+        <!-- Fill Percentage (18% of 70 = 12.6) -->
+        <rect x="0" y="0" width="12.6" height="15" rx="3" fill="#c1e3fe" />
+      </g>
+      <text x="308" y="12" class="code-font c-usage">18%</text>
+      <text x="340" y="11" class="code-font c-dim">(resets in 4h 12m)</text>
+
+      <text x="475" y="11" class="code-font c-sep">│</text>
+
+      <!-- Weekly Bar -->
+      <text x="495" y="11" class="code-font c-label">Usage Weekly</text>
+      <g transform="translate(598, 0)">
+        <rect x="0" y="0" width="70" height="15" rx="3" fill="#2c3943" />
+        <!-- Fill Percentage (65% of 70 = 45.5) -->
+        <rect x="0" y="0" width="45.5" height="15" rx="3" fill="#c1e3fe" />
+      </g>
+      <text x="676" y="12" class="code-font c-usage">65%</text>
+      <text x="708" y="11" class="code-font c-dim">(resets in 1d 15h)</text>
+    </g>
+
+    <!-- Line 3: Mode and State -->
+    <g transform="translate(0, 84)">
+      <text x="0" y="0" class="code-font">
+        <tspan class="c-warn">&gt;&gt; bypass permissions on</tspan>
+        <tspan class="c-dim"> (shift+tab to cycle) · idle</tspan>
+      </text>
+    </g>
+
+    <!-- Prompt line -->
+    <g transform="translate(0, 134)">
+      <text x="0" y="0" class="code-font" fill="#828791">&gt; </text>
+      <rect x="18" y="-13" width="8" height="16" fill="#7987a0" opacity="0.8" />
+    </g>
+  </g>
+</svg>

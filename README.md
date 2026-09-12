@@ -1,76 +1,91 @@
+<div align="center">
+
 # 🪶 agy-hud
 
-A sleek, seamless, pastel HUD statusline for **Google Antigravity CLI (`agy`)**.
+**A sleek, seamless pastel HUD statusline for Google Antigravity CLI (`agy`).**
 
-[English](README.md) | [中文说明](#-中文说明)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20(Pure%20Stdlib)-success.svg)]()
+[![Style: Apple & Linear](https://img.shields.io/badge/design-Apple%20%26%20Linear%20Pastel-ffbbf0.svg)]()
 
-```text
-[3.8 Flash High] │ my-app git:(main*)
-Context          41% │ 5h          18% (resets in 4h 12m) │ Usage Weekly          65% (resets in 1d 15h)
->> bypass permissions on (shift+tab to cycle) · idle
-```
+<br>
 
----
+<p align="center">
+  <img src="docs/preview.svg" alt="agy-hud preview" width="100%">
+</p>
 
-## ✨ Features
+[English](#-english) • [中文说明](#-中文说明) • [Quick Install](#-one-liner-installation) • [Comparison](#-why-agy-hud)
 
-- 🎨 **Apple & Linear Pastel Palette** — High-taste, muted pastel colorway (soft lime green, baby blue, warm amber, lavender) replacing harsh, high-saturation neon colors.
-- 🧊 **100% Solid Seamless Bars** — Uses 24-bit ANSI background blocks on space cells. **Zero vertical character gap lines**, rendering smooth, solid progress blocks in all modern terminals (Warp, iTerm2, Kitty, Ghostty, Alacritty).
-- ⏳ **Dual Quota Monitoring** — Tracks rolling **5-Hour** and **Weekly** quotas with dynamic countdown timers (`(4h 12m)`, `(1d 15h)`). Automatically maps both Google native models and Claude/GPT 3P models.
-- 🧠 **Context Window Metrics** — Real-time context usage percentage and automatic color shifts (lime green `< 70%`, warm amber `70% - 85%`, coral red `≥ 85%`).
-- 📁 **Workspace & Git Detection** — Fast direct filesystem inspection of `.git/HEAD` for branch name and uncommitted dirty changes (`*`).
-- 🛡️ **Execution & Permission Mode** — Displays current agent security posture (`>> bypass permissions on`, `sandbox mode`, etc.).
-- 🪶 **Zero External Dependencies** — Written in pure Python 3 standard library (`sys`, `os`, `json`, `subprocess`). Sub-millisecond execution with no noticeable CLI latency.
+</div>
 
 ---
 
-## 🚀 Quick Start
+## ⚡ One-Liner Installation
 
-### 1. Installation
-
-Clone the repository and run the installer:
+Install directly with a single command (works out of the box, zero dependencies):
 
 ```bash
-git clone https://github.com/MaxHaiCom/agy-hud.git
-cd agy-hud
-python3 install.py
+curl -fsSL https://raw.githubusercontent.com/MaxHaiCom/agy-hud/main/install.py | python3
 ```
 
-The installer will:
-1. Copy `statusline.py` to `~/.gemini/antigravity-cli/statusline.py`.
-2. Create a timestamped backup of your `~/.gemini/antigravity-cli/settings.json`.
-3. Configure the `"statusLine"` hook in `settings.json`.
-4. Output a live preview.
-
-### 2. Manual Configuration
-
-Alternatively, copy `statusline.py` to `~/.gemini/antigravity-cli/` and edit `~/.gemini/antigravity-cli/settings.json`:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "python3 ~/.gemini/antigravity-cli/statusline.py"
-  }
-}
-```
+> **Manual / Git Clone Method**:
+> ```bash
+> git clone https://github.com/MaxHaiCom/agy-hud.git
+> cd agy-hud && python3 install.py
+> ```
 
 ---
 
-## 🔍 Preview & Testing
+## 🌟 Why agy-hud?
 
-Preview the rendering directly from your terminal:
+Most terminal statuslines either overwhelm your screen with eye-straining neon colors, or rely on private Nerd Font glyphs that turn into broken square boxes (``) on standard terminals.
 
+**`agy-hud`** brings the restrained, premium **Apple / Linear design system** to the Google Antigravity CLI:
+
+| Feature | `agy-hud` | Default `agy` | Other AGY Statuslines |
+| :--- | :---: | :---: | :---: |
+| **Solid Seamless Progress Bars** | **✅ 100% Contiguous (Zero Gap Lines)** | ❌ None | ❌ Fragmented character gaps (`█░`) |
+| **Design Aesthetic** | **✅ Linear & Apple Pastel** | ❌ Monochrome | ❌ Cluttered neon & emoji spam |
+| **Dual-Pool Quota Tracking** | **✅ Real-time 5h & Weekly Used %** | ⚠️ Hidden in `/usage` | ⚠️ Inaccurate / Remaining % |
+| **Live Reset Countdown** | **✅ Precision Timers (`resets in 4h 12m`)** | ❌ None | ⚠️ Static or absent |
+| **Permission / Bypass Indicator** | **✅ Visible (`>> bypass permissions on`)** | ❌ Not in statusline | ❌ Missing |
+| **Font Portability** | **✅ 100% Universal (No Nerd Font required)** | ✅ Universal | ❌ Requires patched Nerd Fonts |
+| **Zero External Dependencies** | **✅ Pure Python 3 Stdlib** | ✅ Native | ❌ Requires `jq`, Node.js, etc. |
+
+---
+
+## 🎨 Design Principles
+
+1. **Subtle Pastel Tiers**: Muted, calming tones designed for long coding sessions:
+   - **Context**: Fresh Lime (`#b4fa72`) on Dark Olive track (`#202d17`).
+   - **Quota Usage**: Baby Blue (`#c1e3fe`) on Dark Slate track (`#2c3943`).
+   - **Model & Git**: Soft Lavender (`#d0d1fe`) & Orchid (`#d982f5`).
+   - **Smart Warning Escalation**: Automatically shifts to Warm Amber (`≥ 75%`) and Coral Red (`≥ 90%`) when limits approach.
+2. **Seamless Block Engine**: Renders progress bars using ANSI 24-bit background colors on space cells. This completely eliminates the vertical seam lines common in Unicode block characters (`█`).
+3. **Usage-Centric Gauges**: Meters represent **consumed percentage** (filling left-to-right as you work), matching modern intuition and `claude-hud`.
+
+---
+
+## 🔧 CLI Commands & Controls
+
+Inside an interactive `agy` session, you can toggle or manage the statusline anytime:
+
+```text
+/statusline              Toggle statusline on/off
+/statusline on           Enable statusline
+/statusline off          Disable statusline
+/statusline delete       Revert to Antigravity's built-in default
+/statusline help         Show Antigravity statusline help
+```
+
+To preview without opening Antigravity:
 ```bash
 python3 statusline.py --preview
 ```
 
----
-
-## 🗑️ Uninstallation
-
-To remove the statusline hook and revert to the built-in default:
-
+To uninstall and restore your previous configuration:
 ```bash
 python3 uninstall.py
 ```
@@ -79,25 +94,34 @@ python3 uninstall.py
 
 <br>
 
-# 🇨🇳 中文说明
+## 🇨🇳 中文说明
 
-专为 **Google Antigravity CLI (`agy`)** 设计的极简克制、无缝浅色调（Pastel）HUD 状态栏。
+专为 **Google Antigravity CLI (`agy`)** 打造的极简克制、无缝浅色调（Pastel）HUD 状态行。
 
-### ✨ 核心亮点
+### 🌟 核心特色
 
-1. **淡雅低饱和配色（Apple / Linear 质感）**：告别刺眼的廉价荧光霓虹色，采用柔和浅绿、婴儿浅蓝、薰衣草浅紫等极简高质感色系。
-2. **纯色无缝进度条（彻底消除字符间隙）**：通过 24-bit ANSI 背景色渲染空格实现，**彻底杜绝传统字符进度条的竖条细线间隙**，在 Warp / iTerm2 / Ghostty 等终端下呈现一整块连贯的圆润色块。
-3. **5h 与周度双配额监控**：实时计算滚动 5 小时与周度剩余额度，并精确计算重置倒计时（例如 `(4h 12m)`、`(1d 15h)`）。自动适配 Gemini 原生模型与 Claude/GPT 3P 模型。
-4. **实时 Context 占用**：精确展示上下文窗口用量比例，多阶段预警换色（绿色 `< 70%`、暖黄 `70% - 85%`、珊瑚红 `≥ 85%`）。
-5. **当前模式与权限提醒**：直观展示当前执行状态（如 `>> bypass permissions on`、`sandbox mode` 等）。
-6. **零外部依赖**：纯 Python 3 标准库单文件实现，毫秒级快速启动，绝不拖慢终端交互。
+- 🎨 **Apple & Linear 浅色调质感**：告别高饱和荧光刺眼配色，采用柔和浅嫩绿、婴儿浅蓝、薰衣草浅紫，长时间编码不疲劳。
+- 🧊 **彻底消灭细线缝隙（纯色无缝进度条）**：利用 ANSI 24-bit 背景色在空格上渲染，**彻底根除了传统字符进度条的竖条细线缝隙**，在 Warp、iTerm2、Ghostty、Kitty 等终端呈现完全一体的圆润色块。
+- 📊 **额度使用率（Used %）与精确倒计时**：
+  - 进度条自左向右增长，直观反应额度消耗；
+  - 超过 `75%` 自动切换暖黄预警，超过 `90%` 切换珊瑚红；
+  - 附带精确重置时间：`5h 18% (resets in 4h 12m)`、`Usage Weekly 65% (resets in 1d 15h)`；
+  - 自动适配 Google Gemini 专属池与 Claude/GPT 第三方双池模型。
+- 🛡️ **当前模式与权限常驻感知**：直观展示 `>> bypass permissions on`、`sandbox mode` 或 `strict` 状态，避免因授权卡壳中断思路。
+- 🪶 **零外部依赖**：基于纯 Python 3 标准库，无外部子进程拖拽，毫秒级快速启动。
+- 🔤 **无需专用 Nerd Font 补丁字体**：不使用私有特殊符号，任何默认终端字体均可完美呈现，绝不出现豆腐块乱码。
 
-### 🚀 安装与使用
+### ⚡ 极速一键安装
+
+在终端直接运行：
 
 ```bash
-git clone https://github.com/MaxHaiCom/agy-hud.git
-cd agy-hud
-python3 install.py
+curl -fsSL https://raw.githubusercontent.com/MaxHaiCom/agy-hud/main/install.py | python3
+```
+
+卸载恢复原状：
+```bash
+python3 uninstall.py
 ```
 
 ---
