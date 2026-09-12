@@ -47,6 +47,7 @@ Most terminal statuslines either overwhelm your screen with eye-straining neon c
 | Feature | `agy-hud` | Default `agy` | Other AGY Statuslines |
 | :--- | :---: | :---: | :---: |
 | **Solid Seamless Progress Bars** | **✅ 100% Contiguous (Zero Gap Lines)** | ❌ None | ❌ Fragmented character gaps (`█░`) |
+| **Multi-Window Quota Sync** | **✅ Cross-Process Shared Cache** | ❌ Process-Isolated (Stale Gauges) | ❌ None |
 | **Design Aesthetic** | **✅ Linear & Apple Pastel** | ❌ Monochrome | ❌ Cluttered neon & emoji spam |
 | **Dual-Pool Quota Tracking** | **✅ Real-time 5h & Weekly Used %** | ⚠️ Hidden in `/usage` | ⚠️ Inaccurate / Remaining % |
 | **Live Reset Countdown** | **✅ Precision Timers (`resets in 4h 12m`)** | ❌ None | ⚠️ Static or absent |
@@ -107,6 +108,9 @@ python3 uninstall.py
   - 超过 `75%` 自动切换暖黄预警，超过 `90%` 切换珊瑚红；
   - 附带精确重置时间：`5h 18% (resets in 4h 12m)`、`Usage Weekly 65% (resets in 1d 15h)`；
   - 自动适配 Google Gemini 专属池与 Claude/GPT 第三方双池模型。
+- 🔄 **跨终端窗口配额实时共享同步**：
+  - 原生 `agy` 在长任务（`working`）或节流时只更新本地 Context，配额容易卡在历史旧值；
+  - `agy-hud` 内置轻量跨进程原子共享缓存，任一窗口拉取到最新配额或重置周期，其余并发/长任务窗口下一次重绘时立即同步最新真值，消灭进程信息孤岛。
 - 🛡️ **当前模式与权限常驻感知**：直观展示 `>> bypass permissions on`、`sandbox mode` 或 `strict` 状态，避免因授权卡壳中断思路。
 - 🪶 **零外部依赖**：基于纯 Python 3 标准库，无外部子进程拖拽，毫秒级快速启动。
 - 🔤 **无需专用 Nerd Font 补丁字体**：不使用私有特殊符号，任何默认终端字体均可完美呈现，绝不出现豆腐块乱码。
