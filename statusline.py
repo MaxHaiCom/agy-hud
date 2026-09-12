@@ -284,48 +284,48 @@ def render_hud(data: Dict[str, Any]) -> str:
     # Format 5h Quota
     if isinstance(q_5h, dict):
         rem_frac = q_5h.get("remaining_fraction")
-        if rem_frac is None and "used_percentage" in q_5h:
-            used = float(q_5h["used_percentage"])
-            rem_pct = 100.0 - used
-        elif rem_frac is not None:
-            rem_pct = float(rem_frac) * 100.0
+        if rem_frac is not None:
+            used_pct = (1.0 - float(rem_frac)) * 100.0
+        elif "used_percentage" in q_5h:
+            used_pct = float(q_5h["used_percentage"])
         else:
-            rem_pct = None
+            used_pct = None
 
-        if rem_pct is not None:
+        if used_pct is not None:
+            used_pct = max(0.0, min(100.0, used_pct))
             sec = q_5h.get("reset_in_seconds")
-            dur_str = f" {FG_LABEL}({format_duration(sec)}){C_RESET}" if sec else ""
-            if rem_pct <= 15:
+            dur_str = f" {FG_LABEL}(resets in {format_duration(sec)}){C_RESET}" if sec else ""
+            if used_pct >= 90:
                 q_fill, q_track, q_text = BG_CRIT_FILL, BG_CRIT_TRACK, FG_CRIT_TEXT
-            elif rem_pct <= 30:
+            elif used_pct >= 75:
                 q_fill, q_track, q_text = BG_WARN_FILL, BG_WARN_TRACK, FG_WARN_TEXT
             else:
                 q_fill, q_track, q_text = BG_USAGE_FILL, BG_USAGE_TRACK, FG_USAGE_TEXT
-            bar_5h = make_solid_bar(rem_pct, width=8, fill_rgb=q_fill, track_rgb=q_track)
-            line2_parts.append(f"{FG_LABEL}5h{C_RESET} {bar_5h} {q_text}{rem_pct:.0f}%{C_RESET}{dur_str}")
+            bar_5h = make_solid_bar(used_pct, width=8, fill_rgb=q_fill, track_rgb=q_track)
+            line2_parts.append(f"{FG_LABEL}5h{C_RESET} {bar_5h} {q_text}{used_pct:.0f}%{C_RESET}{dur_str}")
 
     # Format Weekly Quota
     if isinstance(q_wk, dict):
         rem_frac = q_wk.get("remaining_fraction")
-        if rem_frac is None and "used_percentage" in q_wk:
-            used = float(q_wk["used_percentage"])
-            rem_pct = 100.0 - used
-        elif rem_frac is not None:
-            rem_pct = float(rem_frac) * 100.0
+        if rem_frac is not None:
+            used_pct = (1.0 - float(rem_frac)) * 100.0
+        elif "used_percentage" in q_wk:
+            used_pct = float(q_wk["used_percentage"])
         else:
-            rem_pct = None
+            used_pct = None
 
-        if rem_pct is not None:
+        if used_pct is not None:
+            used_pct = max(0.0, min(100.0, used_pct))
             sec = q_wk.get("reset_in_seconds")
-            dur_str = f" {FG_LABEL}({format_duration(sec)}){C_RESET}" if sec else ""
-            if rem_pct <= 15:
+            dur_str = f" {FG_LABEL}(resets in {format_duration(sec)}){C_RESET}" if sec else ""
+            if used_pct >= 90:
                 q_fill, q_track, q_text = BG_CRIT_FILL, BG_CRIT_TRACK, FG_CRIT_TEXT
-            elif rem_pct <= 30:
+            elif used_pct >= 75:
                 q_fill, q_track, q_text = BG_WARN_FILL, BG_WARN_TRACK, FG_WARN_TEXT
             else:
                 q_fill, q_track, q_text = BG_USAGE_FILL, BG_USAGE_TRACK, FG_USAGE_TEXT
-            bar_wk = make_solid_bar(rem_pct, width=8, fill_rgb=q_fill, track_rgb=q_track)
-            line2_parts.append(f"{FG_LABEL}Usage Weekly{C_RESET} {bar_wk} {q_text}{rem_pct:.0f}%{C_RESET}{dur_str}")
+            bar_wk = make_solid_bar(used_pct, width=8, fill_rgb=q_fill, track_rgb=q_track)
+            line2_parts.append(f"{FG_LABEL}Usage Weekly{C_RESET} {bar_wk} {q_text}{used_pct:.0f}%{C_RESET}{dur_str}")
 
     line2 = sep.join(line2_parts)
 
@@ -369,7 +369,7 @@ def main():
                     "reset_in_seconds": 15120,
                 },
                 "gemini-weekly": {
-                    "remaining_fraction": 0.65,
+                    "remaining_fraction": 0.35,
                     "reset_in_seconds": 140400,
                 },
             },

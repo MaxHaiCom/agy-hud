@@ -6,7 +6,7 @@ A sleek, seamless, pastel HUD statusline for **Google Antigravity CLI (`agy`)**.
 
 ```text
 [3.8 Flash High] │ my-app git:(main*)
-Context          41% │ 5h          82% (4h 12m) │ Usage Weekly          65% (1d 15h)
+Context          41% │ 5h          18% (resets in 4h 12m) │ Usage Weekly          65% (resets in 1d 15h)
 >> bypass permissions on (shift+tab to cycle) · idle
 ```
 
