@@ -16,6 +16,7 @@ import os
 import json
 import time
 import subprocess
+from datetime import datetime
 from typing import Dict, Any, Tuple, Optional
 
 # --- Palette: Exact Soft Pastel Colors (Linear / Apple Dark Mode) ---
@@ -177,6 +178,7 @@ def detect_git_info(cwd: str) -> Tuple[str, bool]:
     return branch, is_dirty
 
 
+
 # --- Cross-Process Multi-Window Quota Synchronization ---
 CACHE_DIR = os.path.expanduser("~/.cache/agy-hud")
 CACHE_FILE = os.path.join(CACHE_DIR, "quota_cache.json")
@@ -205,69 +207,139 @@ def _write_quota_cache(data: Dict[str, Any]) -> None:
         pass
 
 
+def extract_reset_timestamp(item: Optional[Dict[str, Any]], now: float) -> Optional[float]:
+    """Extract absolute reset timestamp (epoch seconds) using reset_time or reset_in_seconds."""
+    if not isinstance(item, dict):
+        return None
+    rt = item.get("reset_time")
+    if rt and isinstance(rt, str):
+        try:
+            clean_rt = rt.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(clean_rt)
+            ts = dt.timestamp()
+            if ts > 0:
+                return ts
+        except Exception:
+            pass
+    raw_sec = item.get("reset_in_seconds")
+    if raw_sec is not None:
+        try:
+            s = float(raw_sec)
+            if s > 0:
+                return now + s
+        except Exception:
+            pass
+    if "reset_at" in item and item["reset_at"] is not None:
+        try:
+            ts = float(item["reset_at"])
+            if ts > 0:
+                return ts
+        except Exception:
+            pass
+    return None
+
+
+def _prune_expired_pools(pools: Dict[str, Any], now: float) -> bool:
+    """Evict expired or zombie quota cache entries across all pools."""
+    changed = False
+    for pool_name, pool_data in list(pools.items()):
+        if not isinstance(pool_data, dict):
+            continue
+        # 5h check (max ttl 5 hours)
+        if "5h" in pool_data and isinstance(pool_data["5h"], dict):
+            item = pool_data["5h"]
+            rec = item.get("recorded_at") or 0
+            rst = item.get("reset_at")
+            if (now - rec > 18000) or (rst and rst <= (now - 30)) or (not rst and (now - rec > 300)):
+                del pool_data["5h"]
+                changed = True
+        # weekly check (max ttl 7 days)
+        if "weekly" in pool_data and isinstance(pool_data["weekly"], dict):
+            item = pool_data["weekly"]
+            rec = item.get("recorded_at") or 0
+            rst = item.get("reset_at")
+            if (now - rec > 604800) or (rst and rst <= (now - 30)) or (not rst and (now - rec > 300)):
+                del pool_data["weekly"]
+                changed = True
+        if not pool_data:
+            del pools[pool_name]
+            changed = True
+    return changed
+
+
 def reconcile_quota_item(
     item_in: Optional[Dict[str, Any]],
     cached_item: Optional[Dict[str, Any]],
-    now: float
+    now: float,
+    max_ttl: float = 18000.0
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Reconciles a single quota metric (e.g. 5h or weekly) between incoming stdin data
     and cross-process cached state.
     Returns: (resolved_item, updated_cache_item)
     """
+    # 1. Parse incoming item
     in_valid = False
     in_rem = None
     in_sec = None
     in_reset_at = None
 
     if isinstance(item_in, dict):
-        if "remaining_fraction" in item_in:
+        if "remaining_fraction" in item_in and item_in["remaining_fraction"] is not None:
             try:
-                in_rem = float(item_in["remaining_fraction"])
+                in_rem = max(0.0, min(1.0, float(item_in["remaining_fraction"])))
                 in_valid = True
             except Exception:
                 pass
-        elif "used_percentage" in item_in:
+        elif "used_percentage" in item_in and item_in["used_percentage"] is not None:
             try:
-                in_rem = 1.0 - (float(item_in["used_percentage"]) / 100.0)
+                in_rem = max(0.0, min(1.0, 1.0 - (float(item_in["used_percentage"]) / 100.0)))
                 in_valid = True
             except Exception:
                 pass
 
+        in_reset_at = extract_reset_timestamp(item_in, now)
         raw_sec = item_in.get("reset_in_seconds")
         if raw_sec is not None:
             try:
                 s = float(raw_sec)
                 if s > 0:
                     in_sec = s
-                    in_reset_at = now + s
             except Exception:
                 pass
+        elif in_reset_at and in_reset_at > now:
+            in_sec = in_reset_at - now
 
+    # 2. Parse and validate cached item with strict TTL and reset checks
     c_valid = False
     c_rem = None
     c_reset_at = None
     c_recorded_at = None
 
     if isinstance(cached_item, dict):
-        if "remaining_fraction" in cached_item:
+        if "remaining_fraction" in cached_item and cached_item["remaining_fraction"] is not None:
             try:
-                c_rem = float(cached_item["remaining_fraction"])
+                c_rem = max(0.0, min(1.0, float(cached_item["remaining_fraction"])))
                 c_valid = True
             except Exception:
                 pass
-        c_reset_at = cached_item.get("reset_at")
+
+        c_reset_at = extract_reset_timestamp(cached_item, now)
         c_recorded_at = cached_item.get("recorded_at") or now
 
-        # Invalidate cache if completely expired in the past (> 60s ago)
-        if c_reset_at and (c_reset_at < now - 60):
+        # Strict invalidation checks:
+        if (now - c_recorded_at) > max_ttl:
+            c_valid = False
+        if c_reset_at and c_reset_at <= (now - 30):
+            c_valid = False
+        if not c_reset_at and (now - c_recorded_at) > 300:
             c_valid = False
 
-    # 1. Neither valid
+    # Case 1: Neither valid
     if not in_valid and not c_valid:
         return item_in, None
 
-    # 2. Only cache is valid
+    # Case 2: Only cache is valid (incoming is missing or completely malformed)
     if not in_valid and c_valid:
         cur_sec = max(0, int(c_reset_at - now)) if c_reset_at else 0
         resolved = {
@@ -276,27 +348,37 @@ def reconcile_quota_item(
         }
         return resolved, cached_item
 
-    # 3. Only incoming is valid
+    # Case 3: Only incoming is valid (cache expired, empty, or missing)
     if in_valid and not c_valid:
+        cur_sec = int(in_sec) if in_sec is not None else (max(0, int(in_reset_at - now)) if in_reset_at else None)
+        resolved = {
+            "remaining_fraction": in_rem,
+            "reset_in_seconds": cur_sec
+        }
         new_cache = {
             "remaining_fraction": in_rem,
             "reset_at": in_reset_at,
             "recorded_at": now
         }
-        return item_in, new_cache
+        return resolved, new_cache
 
-    # 4. Both valid
-    # 4a: Incoming has a clearly newer reset cycle (e.g. quota reset happened)
-    if in_reset_at and c_reset_at and (in_reset_at > c_reset_at + 600):
+    # Case 4: Both appear valid
+    # 4a. Incoming has entered a clearly newer reset cycle (e.g. quota reset happened)
+    if in_reset_at and c_reset_at and (in_reset_at > c_reset_at + 300):
+        cur_sec = int(in_sec) if in_sec is not None else max(0, int(in_reset_at - now))
+        resolved = {
+            "remaining_fraction": in_rem,
+            "reset_in_seconds": cur_sec
+        }
         new_cache = {
             "remaining_fraction": in_rem,
             "reset_at": in_reset_at,
             "recorded_at": now
         }
-        return item_in, new_cache
+        return resolved, new_cache
 
-    # 4b: Cache has a clearly newer reset cycle (incoming is a stale snapshot from previous cycle)
-    if in_reset_at and c_reset_at and (c_reset_at > in_reset_at + 600):
+    # 4b. Cache reflects a newer reset cycle (incoming is a stale snapshot from previous cycle during a long task)
+    if in_reset_at and c_reset_at and (c_reset_at > in_reset_at + 300) and (c_reset_at > now):
         cur_sec = max(0, int(c_reset_at - now))
         resolved = {
             "remaining_fraction": c_rem,
@@ -304,21 +386,27 @@ def reconcile_quota_item(
         }
         return resolved, cached_item
 
-    # 4c: Incoming missing reset_in_seconds or claims past reset, while cache has valid future reset
-    if c_reset_at and (c_reset_at > now) and (not in_reset_at or in_reset_at <= now + 60):
-        cur_sec = max(0, int(c_reset_at - now))
+    # 4c. Incoming shows dramatic replenishment/reset (e.g. was low in cache, but incoming is fresh)
+    if in_rem is not None and c_rem is not None and (in_rem > c_rem + 0.20):
+        cur_sec = int(in_sec) if in_sec is not None else (max(0, int(in_reset_at - now)) if in_reset_at else None)
         resolved = {
-            "remaining_fraction": c_rem,
+            "remaining_fraction": in_rem,
             "reset_in_seconds": cur_sec
         }
-        return resolved, cached_item
+        new_cache = {
+            "remaining_fraction": in_rem,
+            "reset_at": in_reset_at or c_reset_at,
+            "recorded_at": now
+        }
+        return resolved, new_cache
 
-    # 4d: Same reset cycle - compare consumption
+    # 4d. Same cycle: compare consumption
+    target_reset_at = in_reset_at or c_reset_at
+    cur_sec = int(in_sec) if in_sec is not None else (max(0, int(target_reset_at - now)) if target_reset_at else None)
+
     if in_rem is not None and c_rem is not None:
         if in_rem < c_rem - 0.005:
-            # Incoming consumed more tokens (newer activity in same cycle)
-            target_reset_at = in_reset_at or c_reset_at
-            cur_sec = max(0, int(target_reset_at - now)) if target_reset_at else in_sec
+            # Incoming consumed more tokens in same cycle
             resolved = {
                 "remaining_fraction": in_rem,
                 "reset_in_seconds": cur_sec
@@ -330,24 +418,21 @@ def reconcile_quota_item(
             }
             return resolved, new_cache
         elif c_rem < in_rem - 0.005:
-            # Cache reflects more recent consumption from peer window
-            target_reset_at = c_reset_at or in_reset_at
-            cur_sec = max(0, int(target_reset_at - now)) if target_reset_at else 0
+            # Cache consumed more from peer window in same valid cycle
+            cached_sec = max(0, int(target_reset_at - now)) if target_reset_at else cur_sec
             resolved = {
                 "remaining_fraction": c_rem,
-                "reset_in_seconds": cur_sec
+                "reset_in_seconds": cached_sec
             }
             return resolved, cached_item
 
-    # Fallback: maintain incoming with best reset_at
-    target_reset_at = in_reset_at or c_reset_at
-    cur_sec = max(0, int(target_reset_at - now)) if target_reset_at else in_sec
+    # Fallback: trust incoming
     resolved = {
-        "remaining_fraction": in_rem if in_rem is not None else c_rem,
+        "remaining_fraction": in_rem,
         "reset_in_seconds": cur_sec
     }
     new_cache = {
-        "remaining_fraction": resolved["remaining_fraction"],
+        "remaining_fraction": in_rem,
         "reset_at": target_reset_at,
         "recorded_at": now
     }
@@ -368,15 +453,23 @@ def sync_shared_quotas(
         pool_key = "3p" if is_3p else "gemini"
         cache = _read_quota_cache()
         pools = cache.get("pools", {})
+        if not isinstance(pools, dict):
+            pools = {}
+
+        # Prune expired entries from all pools first
+        cache_changed = _prune_expired_pools(pools, now)
+
         pool_cache = pools.get(pool_key, {})
+        if not isinstance(pool_cache, dict):
+            pool_cache = {}
 
         c_5h = pool_cache.get("5h")
         c_wk = pool_cache.get("weekly")
 
-        res_5h, new_c_5h = reconcile_quota_item(q_5h, c_5h, now)
-        res_wk, new_c_wk = reconcile_quota_item(q_wk, c_wk, now)
+        # 5h quota max ttl = 5 hours (18000s); weekly max ttl = 7 days (604800s)
+        res_5h, new_c_5h = reconcile_quota_item(q_5h, c_5h, now, max_ttl=18000.0)
+        res_wk, new_c_wk = reconcile_quota_item(q_wk, c_wk, now, max_ttl=604800.0)
 
-        cache_changed = False
         if new_c_5h is not None and new_c_5h != c_5h:
             pool_cache["5h"] = new_c_5h
             cache_changed = True
@@ -394,6 +487,7 @@ def sync_shared_quotas(
     except Exception:
         # Failsafe: if sync fails, return original data unaltered
         return q_5h, q_wk
+
 
 
 def detect_permission_mode(data: Dict[str, Any]) -> str:
@@ -430,7 +524,7 @@ def detect_permission_mode(data: Dict[str, Any]) -> str:
     return "standard permissions"
 
 
-def render_hud(data: Dict[str, Any]) -> str:
+def render_hud(data: Dict[str, Any], sync_cache: bool = True) -> str:
     """Renders the complete 3-line pastel HUD for Antigravity CLI."""
     sep = f"{FG_SEP} │ {C_RESET}"
 
@@ -501,7 +595,8 @@ def render_hud(data: Dict[str, Any]) -> str:
                 q_wk = v
 
     # Reconcile quotas across multiple terminal windows via persistent cache
-    q_5h, q_wk = sync_shared_quotas(q_5h, q_wk, is_3p=is_3p)
+    if sync_cache:
+        q_5h, q_wk = sync_shared_quotas(q_5h, q_wk, is_3p=is_3p)
 
     # Format 5h Quota
     if isinstance(q_5h, dict):
@@ -596,7 +691,7 @@ def main():
                 },
             },
         }
-        print(render_hud(preview_data))
+        print(render_hud(preview_data, sync_cache=False))
         return
 
     try:
