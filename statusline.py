@@ -393,6 +393,14 @@ def reconcile_quota_item(
     Reconciles a single quota metric (e.g. 5h or weekly) between incoming stdin data
     and cross-process cached state.
     Returns: (resolved_item, updated_cache_item)
+
+    Key Principles:
+    1. Incoming stdin is the direct authoritative source from the active Antigravity CLI / Google API.
+    2. Local cache exists only to bridge concurrent token consumption across peer terminal windows
+       in the EXACT SAME active reset cycle (when a peer consumed more tokens: c_rem < in_rem).
+    3. If incoming data has an active reset cycle, and the cached item has a different cycle
+       (|in_reset_at - c_reset_at| > 1800), incoming ALWAYS wins and overwrites stale/polluted cache.
+    4. Cache must never lock out incoming authoritative data.
     """
     # 1. Parse incoming item
     in_valid = False
@@ -419,12 +427,12 @@ def reconcile_quota_item(
         if raw_sec is not None:
             try:
                 s = float(raw_sec)
-                if s > 0:
-                    in_sec = s
+                if s >= 0:
+                    in_sec = int(s)
             except Exception:
                 pass
         elif in_reset_at and in_reset_at > now:
-            in_sec = in_reset_at - now
+            in_sec = max(0, int(in_reset_at - now))
 
     # 2. Parse and validate cached item with strict TTL and reset checks
     c_valid = False
@@ -455,7 +463,7 @@ def reconcile_quota_item(
     if not in_valid and not c_valid:
         return item_in, None
 
-    # Case 2: Only cache is valid (incoming is missing or completely malformed)
+    # Case 2: Only cache is valid (incoming payload has no quota fields)
     if not in_valid and c_valid:
         cur_sec = max(0, int(c_reset_at - now)) if c_reset_at else 0
         resolved = {
@@ -464,12 +472,11 @@ def reconcile_quota_item(
         }
         return resolved, cached_item
 
-    # Case 3: Only incoming is valid (cache expired, empty, or missing)
+    # Case 3: Only incoming is valid (cache expired, empty, or uninitialized)
     if in_valid and not c_valid:
-        cur_sec = int(in_sec) if in_sec is not None else (max(0, int(in_reset_at - now)) if in_reset_at else None)
         resolved = {
             "remaining_fraction": in_rem,
-            "reset_in_seconds": cur_sec
+            "reset_in_seconds": in_sec
         }
         new_cache = {
             "remaining_fraction": in_rem,
@@ -479,12 +486,11 @@ def reconcile_quota_item(
         return resolved, new_cache
 
     # Case 4: Both appear valid
-    # 4a. Incoming has entered a clearly newer reset cycle (e.g. quota reset happened)
-    if in_reset_at and c_reset_at and (in_reset_at > c_reset_at + 300):
-        cur_sec = int(in_sec) if in_sec is not None else max(0, int(in_reset_at - now))
+    # 4a. If reset cycles differ (|in_reset_at - c_reset_at| > 1800), incoming authoritative cycle wins!
+    if in_reset_at and c_reset_at and abs(in_reset_at - c_reset_at) > 1800:
         resolved = {
             "remaining_fraction": in_rem,
-            "reset_in_seconds": cur_sec
+            "reset_in_seconds": in_sec
         }
         new_cache = {
             "remaining_fraction": in_rem,
@@ -493,59 +499,28 @@ def reconcile_quota_item(
         }
         return resolved, new_cache
 
-    # 4b. Cache reflects a newer reset cycle (incoming is a stale snapshot from previous cycle during a long task)
-    if in_reset_at and c_reset_at and (c_reset_at > in_reset_at + 300) and (c_reset_at > now):
-        cur_sec = max(0, int(c_reset_at - now))
-        resolved = {
-            "remaining_fraction": c_rem,
-            "reset_in_seconds": cur_sec
-        }
-        return resolved, cached_item
-
-    # 4c. Incoming shows dramatic replenishment/reset (e.g. was low in cache, but incoming is fresh)
-    if in_rem is not None and c_rem is not None and (in_rem > c_rem + 0.20):
-        cur_sec = int(in_sec) if in_sec is not None else (max(0, int(in_reset_at - now)) if in_reset_at else None)
-        resolved = {
-            "remaining_fraction": in_rem,
-            "reset_in_seconds": cur_sec
-        }
-        new_cache = {
-            "remaining_fraction": in_rem,
-            "reset_at": in_reset_at or c_reset_at,
-            "recorded_at": now
-        }
-        return resolved, new_cache
-
-    # 4d. Same cycle: compare consumption
+    # 4b. Same cycle: check peer consumption
     target_reset_at = in_reset_at or c_reset_at
-    cur_sec = int(in_sec) if in_sec is not None else (max(0, int(target_reset_at - now)) if target_reset_at else None)
+    target_sec = in_sec if in_sec is not None else (max(0, int(target_reset_at - now)) if target_reset_at else None)
 
     if in_rem is not None and c_rem is not None:
-        if in_rem < c_rem - 0.005:
-            # Incoming consumed more tokens in same cycle
+        if c_rem < in_rem - 0.005:
+            # Peer terminal window consumed more tokens in the same active cycle
             resolved = {
-                "remaining_fraction": in_rem,
-                "reset_in_seconds": cur_sec
+                "remaining_fraction": c_rem,
+                "reset_in_seconds": target_sec
             }
-            new_cache = {
-                "remaining_fraction": in_rem,
+            updated_cache = {
+                "remaining_fraction": c_rem,
                 "reset_at": target_reset_at,
                 "recorded_at": now
             }
-            return resolved, new_cache
-        elif c_rem < in_rem - 0.005:
-            # Cache consumed more from peer window in same valid cycle
-            cached_sec = max(0, int(target_reset_at - now)) if target_reset_at else cur_sec
-            resolved = {
-                "remaining_fraction": c_rem,
-                "reset_in_seconds": cached_sec
-            }
-            return resolved, cached_item
+            return resolved, updated_cache
 
-    # Fallback: trust incoming
+    # Otherwise incoming is equal or has consumed more
     resolved = {
         "remaining_fraction": in_rem,
-        "reset_in_seconds": cur_sec
+        "reset_in_seconds": target_sec
     }
     new_cache = {
         "remaining_fraction": in_rem,
@@ -558,11 +533,12 @@ def reconcile_quota_item(
 def sync_shared_quotas(
     q_5h: Optional[Dict[str, Any]],
     q_wk: Optional[Dict[str, Any]],
-    is_3p: bool = False
+    is_3p: bool = False,
+    allow_write: bool = True
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Synchronizes quotas across multiple CLI windows via local cache.
-    Prevents long-running or throttled sessions from displaying stale quota gauges.
+    Prevents concurrent sessions from displaying stale quota gauges.
     """
     try:
         now = time.time()
@@ -593,7 +569,7 @@ def sync_shared_quotas(
             pool_cache["weekly"] = new_c_wk
             cache_changed = True
 
-        if cache_changed:
+        if cache_changed and allow_write:
             pools[pool_key] = pool_cache
             cache["pools"] = pools
             cache["updated_at"] = now
@@ -730,8 +706,10 @@ def render_hud(data: Dict[str, Any], sync_cache: bool = True, term_width: Option
                 q_wk = v
 
     # Reconcile quotas across multiple terminal windows via persistent cache
+    session_id = data.get("session_id") or data.get("conversation_id")
+    allow_cache_write = bool(session_id)
     if sync_cache:
-        q_5h, q_wk = sync_shared_quotas(q_5h, q_wk, is_3p=is_3p)
+        q_5h, q_wk = sync_shared_quotas(q_5h, q_wk, is_3p=is_3p, allow_write=allow_cache_write)
 
     info_5h = None
     if isinstance(q_5h, dict):
@@ -894,12 +872,12 @@ def main():
             },
             "quota": {
                 "gemini-5h": {
-                    "remaining_fraction": 1.0,
-                    "reset_in_seconds": 17700,
+                    "remaining_fraction": 0.86,
+                    "reset_in_seconds": 14400,
                 },
                 "gemini-weekly": {
-                    "remaining_fraction": 0.23,
-                    "reset_in_seconds": 396000,
+                    "remaining_fraction": 0.22,
+                    "reset_in_seconds": 38000,
                 },
             },
         }
