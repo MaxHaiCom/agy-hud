@@ -16,8 +16,10 @@ import os
 import json
 import time
 import subprocess
+import re
+import unicodedata
 from datetime import datetime
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 
 # --- Palette: Exact Soft Pastel Colors (Linear / Apple Dark Mode) ---
 # ANSI 24-bit TrueColor sequences
@@ -45,6 +47,120 @@ BG_WARN_FILL = (255, 214, 102)    # Warm Amber fill
 BG_WARN_TRACK = (58, 48, 24)      # Dark Amber track
 BG_CRIT_FILL = (255, 135, 135)    # Coral Red fill
 BG_CRIT_TRACK = (60, 30, 30)      # Dark Maroon track
+
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+def strip_ansi(s: str) -> str:
+    """Strip all ANSI escape codes."""
+    return ANSI_RE.sub("", s)
+
+
+def char_width(ch: str) -> int:
+    """Calculate the terminal display width of a single character."""
+    eaw = unicodedata.east_asian_width(ch)
+    if eaw in ("W", "F"):
+        return 2
+    if unicodedata.category(ch) in ("Mn", "Me", "Cf") and ch != " ":
+        return 0
+    if ord(ch) >= 0x1F300:
+        return 2
+    return 1
+
+
+def visual_length(s: str) -> int:
+    """Compute visual width in terminal cells, ignoring ANSI escape codes."""
+    plain = strip_ansi(s)
+    return sum(char_width(ch) for ch in plain)
+
+
+def slice_visible(s: str, max_w: int) -> str:
+    """Slice string up to max_w visual cells, preserving ANSI codes."""
+    if max_w <= 0:
+        return ""
+    result = []
+    w = 0
+    i = 0
+    while i < len(s):
+        m = ANSI_RE.match(s, i)
+        if m:
+            result.append(m.group(0))
+            i = m.end()
+            continue
+        ch = s[i]
+        cw = char_width(ch)
+        if w + cw > max_w:
+            break
+        result.append(ch)
+        w += cw
+        i += 1
+    return "".join(result)
+
+
+def truncate_to_width(s: str, max_w: int) -> str:
+    """Truncate string to max_w visual cells with ellipsis, preserving ANSI colors."""
+    if max_w <= 0 or visual_length(s) <= max_w:
+        return s
+    suffix = "..." if max_w >= 3 else "." * max_w
+    keep = max(0, max_w - len(suffix))
+    sliced = slice_visible(s, keep)
+    return f"{sliced}{C_RESET}{suffix}"
+
+
+def get_terminal_width(fallback: int = 80) -> int:
+    """
+    Detect active terminal columns reliably across macOS, Linux, and Windows.
+    Queries /dev/tty first (works even when stdin/stdout are redirected into a pipe).
+    """
+    # 1. Process environment variables (allows explicit COLUMNS override)
+    env_cols = os.environ.get("COLUMNS")
+    if env_cols:
+        try:
+            val = int(env_cols)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+
+    # 2. Direct /dev/tty query (handles pipe redirection in CLI wrappers)
+    try:
+        with open("/dev/tty", "r") as tty:
+            cols = os.get_terminal_size(tty.fileno()).columns
+            if cols > 0:
+                return cols
+    except Exception:
+        pass
+
+    # 3. Standard file descriptors
+    for stream in (sys.stdout, sys.stderr, sys.stdin):
+        try:
+            if stream and hasattr(stream, "fileno"):
+                cols = os.get_terminal_size(stream.fileno()).columns
+                if cols > 0:
+                    return cols
+        except Exception:
+            pass
+
+    # 4. shutil fallback
+    try:
+        import shutil
+        cols = shutil.get_terminal_size().columns
+        if cols > 0:
+            return cols
+    except Exception:
+        pass
+
+    return fallback
+
+
+def get_adaptive_bar_width(term_width: int) -> int:
+    """Adaptive progress bar width based on terminal columns."""
+    if term_width >= 85:
+        return 8
+    if term_width >= 60:
+        return 6
+    return 4
 
 
 def make_solid_bar(
@@ -524,9 +640,22 @@ def detect_permission_mode(data: Dict[str, Any]) -> str:
     return "standard permissions"
 
 
-def render_hud(data: Dict[str, Any], sync_cache: bool = True) -> str:
-    """Renders the complete 3-line pastel HUD for Antigravity CLI."""
+def render_hud(data: Dict[str, Any], sync_cache: bool = True, term_width: Optional[int] = None) -> str:
+    """
+    Renders the sleek pastel HUD for Antigravity CLI.
+    Supports responsive auto-wrapping / adaptive multi-line layout based on terminal width:
+    - Wide (>= 100 cols): Single-line compact gauges.
+    - Narrow / Normal (< 100 cols): Multi-line stacked gauges with aligned labels (matching claude-hud).
+    - Compact countdowns and adaptive bar width to prevent any overflow or character clipping.
+    """
+    if term_width is None:
+        term_width = data.get("terminal_width") or data.get("columns")
+    if term_width is None:
+        term_width = get_terminal_width()
+    term_width = max(20, int(term_width))
+
     sep = f"{FG_SEP} │ {C_RESET}"
+    bar_width = get_adaptive_bar_width(term_width)
 
     # === Line 1: [Model] │ Folder git:(branch*) ===
     model_obj = data.get("model") or {}
@@ -545,11 +674,18 @@ def render_hud(data: Dict[str, Any], sync_cache: bool = True) -> str:
     dirty_mark = "*" if is_dirty else ""
     git_str = f" {FG_GIT}git:({branch}{dirty_mark}){C_RESET}" if branch else ""
 
-    line1 = f"{FG_MODEL}[{clean_model}]{C_RESET}{sep}{FG_FOLDER}{folder_name}{C_RESET}{git_str}"
+    badge = f"{FG_MODEL}[{clean_model}]{C_RESET}"
+    folder_git = f"{FG_FOLDER}{folder_name}{C_RESET}{git_str}"
+    line1_combined = f"{badge}{sep}{folder_git}"
+
+    line1_items = []
+    if visual_length(line1_combined) <= term_width:
+        line1_items.append(line1_combined)
+    else:
+        line1_items.append(truncate_to_width(badge, term_width))
+        line1_items.append(truncate_to_width(folder_git, term_width))
 
     # === Line 2: Context Gauge & Quota Gauges ===
-    line2_parts = []
-
     # 1. Context Window
     cw = data.get("context_window") or {}
     ctx_pct = cw.get("used_percentage")
@@ -568,8 +704,7 @@ def render_hud(data: Dict[str, Any], sync_cache: bool = True) -> str:
     else:
         c_ctx_fill, c_ctx_track, c_ctx_text = BG_CTX_FILL, BG_CTX_TRACK, FG_CTX_TEXT
 
-    ctx_bar = make_solid_bar(ctx_pct, width=8, fill_rgb=c_ctx_fill, track_rgb=c_ctx_track)
-    line2_parts.append(f"{FG_LABEL}Context{C_RESET} {ctx_bar} {c_ctx_text}{ctx_pct:.0f}%{C_RESET}")
+    ctx_bar = make_solid_bar(ctx_pct, width=bar_width, fill_rgb=c_ctx_fill, track_rgb=c_ctx_track)
 
     # 2. Quotas: 5h and Weekly
     quotas = data.get("quota") or data.get("quotas") or {}
@@ -598,7 +733,7 @@ def render_hud(data: Dict[str, Any], sync_cache: bool = True) -> str:
     if sync_cache:
         q_5h, q_wk = sync_shared_quotas(q_5h, q_wk, is_3p=is_3p)
 
-    # Format 5h Quota
+    info_5h = None
     if isinstance(q_5h, dict):
         rem_frac = q_5h.get("remaining_fraction")
         if rem_frac is not None:
@@ -611,17 +746,9 @@ def render_hud(data: Dict[str, Any], sync_cache: bool = True) -> str:
         if used_pct is not None:
             used_pct = max(0.0, min(100.0, used_pct))
             sec = q_5h.get("reset_in_seconds")
-            dur_str = f" {FG_LABEL}(resets in {format_duration(sec)}){C_RESET}" if sec else ""
-            if used_pct >= 90:
-                q_fill, q_track, q_text = BG_CRIT_FILL, BG_CRIT_TRACK, FG_CRIT_TEXT
-            elif used_pct >= 75:
-                q_fill, q_track, q_text = BG_WARN_FILL, BG_WARN_TRACK, FG_WARN_TEXT
-            else:
-                q_fill, q_track, q_text = BG_USAGE_FILL, BG_USAGE_TRACK, FG_USAGE_TEXT
-            bar_5h = make_solid_bar(used_pct, width=8, fill_rgb=q_fill, track_rgb=q_track)
-            line2_parts.append(f"{FG_LABEL}5h{C_RESET} {bar_5h} {q_text}{used_pct:.0f}%{C_RESET}{dur_str}")
+            info_5h = (used_pct, sec)
 
-    # Format Weekly Quota
+    info_wk = None
     if isinstance(q_wk, dict):
         rem_frac = q_wk.get("remaining_fraction")
         if rem_frac is not None:
@@ -634,17 +761,74 @@ def render_hud(data: Dict[str, Any], sync_cache: bool = True) -> str:
         if used_pct is not None:
             used_pct = max(0.0, min(100.0, used_pct))
             sec = q_wk.get("reset_in_seconds")
-            dur_str = f" {FG_LABEL}(resets in {format_duration(sec)}){C_RESET}" if sec else ""
-            if used_pct >= 90:
-                q_fill, q_track, q_text = BG_CRIT_FILL, BG_CRIT_TRACK, FG_CRIT_TEXT
-            elif used_pct >= 75:
-                q_fill, q_track, q_text = BG_WARN_FILL, BG_WARN_TRACK, FG_WARN_TEXT
-            else:
-                q_fill, q_track, q_text = BG_USAGE_FILL, BG_USAGE_TRACK, FG_USAGE_TEXT
-            bar_wk = make_solid_bar(used_pct, width=8, fill_rgb=q_fill, track_rgb=q_track)
-            line2_parts.append(f"{FG_LABEL}Usage Weekly{C_RESET} {bar_wk} {q_text}{used_pct:.0f}%{C_RESET}{dur_str}")
+            info_wk = (used_pct, sec)
 
-    line2 = sep.join(line2_parts)
+    def _quota_colors(u_pct: float) -> Tuple[Tuple[int, int, int], Tuple[int, int, int], str]:
+        if u_pct >= 90:
+            return BG_CRIT_FILL, BG_CRIT_TRACK, FG_CRIT_TEXT
+        elif u_pct >= 75:
+            return BG_WARN_FILL, BG_WARN_TRACK, FG_WARN_TEXT
+        else:
+            return BG_USAGE_FILL, BG_USAGE_TRACK, FG_USAGE_TEXT
+
+    def _format_dur(sec_val: Optional[int], is_compact: bool) -> str:
+        if not sec_val or sec_val <= 0:
+            return ""
+        d_text = format_duration(sec_val)
+        if not d_text:
+            return ""
+        if is_compact:
+            return f" {FG_LABEL}({d_text}){C_RESET}"
+        return f" {FG_LABEL}(resets in {d_text}){C_RESET}"
+
+    # Single-line candidate (with full resets label)
+    inline_gauges = [
+        f"{FG_LABEL}Context{C_RESET} {ctx_bar} {c_ctx_text}{ctx_pct:.0f}%{C_RESET}"
+    ]
+
+    if info_5h:
+        u_5h, sec_5h = info_5h
+        qf5, qt5, qtxt5 = _quota_colors(u_5h)
+        b_5h = make_solid_bar(u_5h, width=bar_width, fill_rgb=qf5, track_rgb=qt5)
+        d_5h = _format_dur(sec_5h, is_compact=False)
+        inline_gauges.append(f"{FG_LABEL}5h{C_RESET} {b_5h} {qtxt5}{u_5h:.0f}%{C_RESET}{d_5h}")
+
+    if info_wk:
+        u_wk, sec_wk = info_wk
+        qfw, qtw, qtxtw = _quota_colors(u_wk)
+        b_wk = make_solid_bar(u_wk, width=bar_width, fill_rgb=qfw, track_rgb=qtw)
+        d_wk = _format_dur(sec_wk, is_compact=False)
+        inline_gauges.append(f"{FG_LABEL}Weekly{C_RESET} {b_wk} {qtxtw}{u_wk:.0f}%{C_RESET}{d_wk}")
+
+    gauge_combined = sep.join(inline_gauges)
+    gauge_lines = []
+
+    if visual_length(gauge_combined) <= term_width:
+        gauge_lines.append(gauge_combined)
+    else:
+        # Stacked mode with aligned labels (claude-hud style):
+        # Labels: "Context" (7), "Usage  " (7), "Weekly " (7)
+        label_w = 7
+        is_compact_dur = (term_width < 50)
+
+        l_ctx = FG_LABEL + "Context".ljust(label_w) + C_RESET
+        gauge_lines.append(f"{l_ctx} {ctx_bar} {c_ctx_text}{ctx_pct:.0f}%{C_RESET}")
+
+        if info_5h:
+            u_5h, sec_5h = info_5h
+            qf5, qt5, qtxt5 = _quota_colors(u_5h)
+            b_5h = make_solid_bar(u_5h, width=bar_width, fill_rgb=qf5, track_rgb=qt5)
+            d_5h = _format_dur(sec_5h, is_compact=is_compact_dur)
+            l_5h = FG_LABEL + "Usage".ljust(label_w) + C_RESET
+            gauge_lines.append(f"{l_5h} {b_5h} {qtxt5}{u_5h:.0f}%{C_RESET}{d_5h}")
+
+        if info_wk:
+            u_wk, sec_wk = info_wk
+            qfw, qtw, qtxtw = _quota_colors(u_wk)
+            b_wk = make_solid_bar(u_wk, width=bar_width, fill_rgb=qfw, track_rgb=qtw)
+            d_wk = _format_dur(sec_wk, is_compact=is_compact_dur)
+            l_wk = FG_LABEL + "Weekly".ljust(label_w) + C_RESET
+            gauge_lines.append(f"{l_wk} {b_wk} {qtxtw}{u_wk:.0f}%{C_RESET}{d_wk}")
 
     # === Line 3: >> Mode (shift+tab to cycle) · Agent State ===
     perm_mode = detect_permission_mode(data)
@@ -658,13 +842,41 @@ def render_hud(data: Dict[str, Any], sync_cache: bool = True) -> str:
     else:
         mode_str = f"\x1b[38;2;180;180;180m>> {perm_mode}{C_RESET}"
 
-    line3 = f"{mode_str} {FG_LABEL}(shift+tab to cycle) · {agent_state}{C_RESET}"
+    hint_str = f"{FG_LABEL}(shift+tab to cycle){C_RESET}"
+    state_str = f"{FG_LABEL}· {agent_state}{C_RESET}"
+    line3_full = f"{mode_str} {hint_str} {state_str}"
 
-    return f"{line1}\n{line2}\n{line3}"
+    mode_lines = []
+    if visual_length(line3_full) <= term_width:
+        mode_lines.append(line3_full)
+    else:
+        part_a = mode_str
+        part_b = f"{hint_str} {state_str}"
+        if term_width >= 50 and visual_length(part_a) <= term_width and visual_length(part_b) <= term_width:
+            mode_lines.append(part_a)
+            mode_lines.append(part_b)
+        else:
+            short_line3 = f"{mode_str} {state_str}"
+            if visual_length(short_line3) <= term_width:
+                mode_lines.append(short_line3)
+            else:
+                mode_lines.append(truncate_to_width(short_line3, term_width))
+
+    all_lines = line1_items + gauge_lines + mode_lines
+    final_lines = [truncate_to_width(l, term_width) for l in all_lines]
+    return "\n".join(final_lines)
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("--preview", "-p", "--test", "-t"):
+    if len(sys.argv) > 1 and any(arg in ("--preview", "-p", "--test", "-t") for arg in sys.argv):
+        target_w = None
+        for idx, arg in enumerate(sys.argv):
+            if arg in ("--width", "-w") and idx + 1 < len(sys.argv):
+                try:
+                    target_w = int(sys.argv[idx + 1])
+                except ValueError:
+                    pass
+
         # Sample preview data mimicking actual Antigravity payload
         preview_data = {
             "model": {
@@ -673,25 +885,25 @@ def main():
             },
             "cwd": os.getcwd(),
             "agent_state": "idle",
-            "permission_mode": "bypass permissions on",
+            "permission_mode": "bypass permissions on (read-all)",
             "context_window": {
-                "total_input_tokens": 410000,
-                "total_output_tokens": 12000,
+                "total_input_tokens": 41000,
+                "total_output_tokens": 1200,
                 "context_window_size": 1000000,
-                "used_percentage": 41.0,
+                "used_percentage": 4.0,
             },
             "quota": {
                 "gemini-5h": {
-                    "remaining_fraction": 0.82,
-                    "reset_in_seconds": 15120,
+                    "remaining_fraction": 1.0,
+                    "reset_in_seconds": 17700,
                 },
                 "gemini-weekly": {
-                    "remaining_fraction": 0.35,
-                    "reset_in_seconds": 140400,
+                    "remaining_fraction": 0.23,
+                    "reset_in_seconds": 396000,
                 },
             },
         }
-        print(render_hud(preview_data, sync_cache=False))
+        print(render_hud(preview_data, sync_cache=False, term_width=target_w))
         return
 
     try:
